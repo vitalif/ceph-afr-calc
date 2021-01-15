@@ -64,6 +64,17 @@ class Calc extends preact.Component
         this.calc({ eager: event.target.checked });
     }
 
+    format4 = (n) =>
+    {
+        let p = Math.abs(n-(n|0)), m = 10000;
+        while (p != 0 && p < 0.1)
+        {
+            p = p*10;
+            m = m*10;
+        }
+        return Math.round(n*m)/m;
+    }
+
     componentDidMount()
     {
         this.calc({});
@@ -142,7 +153,7 @@ class Calc extends preact.Component
                 Вероятность потери данных в течение года:
             </div>
             <div style="text-align: center; font-size: 200%; margin: 20px 0; font-weight: bold">
-                {Math.round(state.result*10000)/10000} %
+                {this.format4(state.result)} %
             </div>
             <div style="text-align: center; color: #aaa; margin: 10px 0">
                 &copy; Виталий Филиппов 2020+ <a style="color: inherit" href="https://yourcmc.ru/git/vitalif/ceph-afr-calc">(исходники)</a>

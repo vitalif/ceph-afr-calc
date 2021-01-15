@@ -67,7 +67,7 @@ class Calc extends preact.Component
     format4 = (n) =>
     {
         let p = Math.abs(n-(n|0)), m = 10000;
-        while (p != 0 && p < 0.1)
+        while (n < 1 && p != 0 && p < 0.1)
         {
             p = p*10;
             m = m*10;

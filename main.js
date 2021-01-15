@@ -141,8 +141,11 @@ class Calc extends preact.Component
             <div style="text-align: center; font-size: 150%; margin: 20px 0; font-weight: bold">
                 Вероятность потери данных в течение года:
             </div>
-            <div style="text-align: center; font-size: 200%; margin: 10px 0; font-weight: bold">
+            <div style="text-align: center; font-size: 200%; margin: 20px 0; font-weight: bold">
                 {Math.round(state.result*10000)/10000} %
+            </div>
+            <div style="text-align: center; color: #aaa; margin: 10px 0">
+                &copy; Виталий Филиппов 2020+ <a style="color: inherit" href="https://yourcmc.ru/git/vitalif/ceph-afr-calc">(исходники)</a>
             </div>
         </div>);
     }

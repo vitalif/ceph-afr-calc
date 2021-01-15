@@ -1,0 +1,7 @@
+{
+    "presets": [ [ "env" ], "stage-1" ],
+    "retainLines": true,
+    "plugins": [
+        [ "transform-react-jsx", { "pragma": "preact.h" } ]
+    ]
+}

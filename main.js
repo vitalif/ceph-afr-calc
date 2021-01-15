@@ -31,7 +31,7 @@ class Calc extends preact.Component
             speed: st.speed/1000,
             ec: st.ec ? [ st.ec_data, st.ec_parity ] : null,
             replicas: st.replicas,
-            pgs: 100,
+            pgs: 50,
             degraded_replacement: st.eager,
         });
         this.setState(st);

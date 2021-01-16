@@ -8,7 +8,6 @@ module.exports = {
     cluster_afr_fullmesh,
     failure_rate_fullmesh,
     cluster_afr,
-    print_cluster_afr,
     c_n_k,
 };
 
@@ -56,85 +55,24 @@ function failure_rate_fullmesh(n, a, f)
 // is that, with k=2, total failure rate doesn't depend on number of peers per OSD,
 // because it gets increased linearly by increased number of peers to fail
 // and decreased linearly by reduced rebalance time.
-function cluster_afr_pgs({ n_hosts, n_drives, afr_drive, capacity, speed, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 600 })
+function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 600 })
 {
-    pgs = Math.min(pgs, (n_hosts-1)*n_drives/(replicas-1));
+    const pg_size = (ec ? ec_data+ec_parity : replicas);
+    pgs = Math.min(pgs, (n_hosts-1)*n_drives/(pg_size-1));
+    const host_pgs = Math.min(pgs*n_drives, (n_hosts-1)*n_drives/(pg_size-1));
     const resilver_disk = n_drives == 1 || osd_rm ? pgs : (n_drives-1);
-    const disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_disk)/speed)/86400/365;
-    return 1 - (1 - afr_drive * (1-(1-(afr_drive*disk_heal_time)**(replicas-1))**pgs)) ** (n_hosts*n_drives);
-}
-
-function cluster_afr_pgs_ec({ n_hosts, n_drives, afr_drive, capacity, speed, ec: [ ec_data, ec_parity ], pgs = 1, osd_rm, degraded_replacement, down_out_interval = 600 })
-{
-    const ec_total = ec_data+ec_parity;
-    pgs = Math.min(pgs, (n_hosts-1)*n_drives/(ec_total-1));
-    const resilver_disk = n_drives == 1 || osd_rm ? pgs : (n_drives-1);
-    const disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_disk)/speed)/86400/365;
-    return 1 - (1 - afr_drive * (1-(1-failure_rate_fullmesh(ec_total-1, afr_drive*disk_heal_time, ec_parity))**pgs)) ** (n_hosts*n_drives);
-}
-
-// Same as above, but also take server failures into account
-function cluster_afr_pgs_hosts({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 600 })
-{
-    const otherhosts = Math.min(pgs, (n_hosts-1)/(replicas-1));
-    pgs = Math.min(pgs, (n_hosts-1)*n_drives/(replicas-1));
-    const resilver_disk = n_drives == 1 || osd_rm ? pgs : (n_drives-1);
-    const pgh = Math.min(pgs*n_drives, (n_hosts-1)*n_drives/(replicas-1));
     const disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_disk)/speed)/86400/365;
     const host_heal_time = (down_out_interval + n_drives*capacity/pgs/speed)/86400/365;
-    const p1 = ((afr_drive+afr_host*pgs/otherhosts)*host_heal_time);
-    const p2 = ((afr_drive+afr_host*pgs/otherhosts)*disk_heal_time);
-    return 1 - ((1 - afr_host * (1-(1-p1**(replicas-1))**pgh)) ** n_hosts) *
-        ((1 - afr_drive * (1-(1-p2**(replicas-1))**pgs)) ** (n_hosts*n_drives));
-}
-
-function cluster_afr_pgs_ec_hosts({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, ec: [ ec_data, ec_parity ], pgs = 1, osd_rm, degraded_replacement, down_out_interval = 600 })
-{
-    const ec_total = ec_data+ec_parity;
-    const otherhosts = Math.min(pgs, (n_hosts-1)/(ec_total-1));
-    pgs = Math.min(pgs, (n_hosts-1)*n_drives/(ec_total-1));
-    const resilver_disk = n_drives == 1 || osd_rm ? pgs : (n_drives-1);
-    const pgh = Math.min(pgs*n_drives, (n_hosts-1)*n_drives/(ec_total-1));
-    const disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_disk)/speed)/86400/365;
-    const host_heal_time = (down_out_interval + n_drives*capacity/pgs/speed)/86400/365;
-    const p1 = ((afr_drive+afr_host*pgs/otherhosts)*host_heal_time);
-    const p2 = ((afr_drive+afr_host*pgs/otherhosts)*disk_heal_time);
-    return 1 - ((1 - afr_host * (1-(1-failure_rate_fullmesh(ec_total-1, p1, ec_parity))**pgh)) ** n_hosts) *
-        ((1 - afr_drive * (1-(1-failure_rate_fullmesh(ec_total-1, p2, ec_parity))**pgs)) ** (n_hosts*n_drives));
-}
-
-// Wrapper for 4 above functions
-function cluster_afr(config)
-{
-    if (config.ec && config.afr_host)
-    {
-        return cluster_afr_pgs_ec_hosts(config);
-    }
-    else if (config.ec)
-    {
-        return cluster_afr_pgs_ec(config);
-    }
-    else if (config.afr_host)
-    {
-        return cluster_afr_pgs_hosts(config);
-    }
-    else
-    {
-        return cluster_afr_pgs(config);
-    }
-}
-
-function print_cluster_afr(config)
-{
-    console.log(
-        `${config.n_hosts} nodes with ${config.n_drives} ${sprintf("%.1f", config.capacity/1000)}TB drives`+
-        `, capable to backfill at ${sprintf("%.1f", config.speed*1000)} MB/s, drive AFR ${sprintf("%.1f", config.afr_drive*100)}%`+
-        (config.afr_host ? `, host AFR ${sprintf("%.1f", config.afr_host*100)}%` : '')+
-        (config.ec ? `, EC ${config.ec[0]}+${config.ec[1]}` : `, ${config.replicas} replicas`)+
-        `, ${config.pgs||1} PG per OSD`+
-        (config.degraded_replacement ? `\n...and you don't let the rebalance finish before replacing drives` : '')
-    );
-    console.log('-> '+sprintf("%.7f%%", 100*cluster_afr(config))+'\n');
+    const disk_heal_fail = ((afr_drive+afr_host/n_drives)*disk_heal_time);
+    const host_heal_fail = ((afr_drive+afr_host/n_drives)*host_heal_time);
+    const disk_pg_fail = ec
+        ? failure_rate_fullmesh(ec_data+ec_parity-1, disk_heal_fail, ec_parity)
+        : disk_heal_fail**(replicas-1);
+    const host_pg_fail = ec
+        ? failure_rate_fullmesh(ec_data+ec_parity-1, host_heal_fail, ec_parity)
+        : host_heal_fail**(replicas-1);
+    return 1 - ((1 - afr_drive * (1-(1-disk_pg_fail)**pgs)) ** (n_hosts*n_drives))
+        * ((1 - afr_host * (1-(1-host_pg_fail)**host_pgs)) ** n_hosts);
 }
 
 /******** UTILITY ********/

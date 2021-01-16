@@ -29,7 +29,9 @@ class Calc extends preact.Component
             afr_host: st.afr_host/100,
             capacity: st.capacity*1000,
             speed: st.speed/1000,
-            ec: st.ec ? [ st.ec_data, st.ec_parity ] : null,
+            ec: st.ec,
+            ec_data: st.ec_data,
+            ec_parity: st.ec_parity,
             replicas: st.replicas,
             pgs: 50,
             degraded_replacement: st.eager,
@@ -66,13 +68,26 @@ class Calc extends preact.Component
 
     format4 = (n) =>
     {
-        let p = Math.abs(n-(n|0)), m = 10000;
-        while (n < 1 && p != 0 && p < 0.1)
+        if (n >= 1 || n <= -1)
+            return ''+(Math.round(n*10000)/10000);
+        if (n == 0)
+            return '0';
+        let s = '0.', i = 0, c = 0;
+        if (n < 0)
         {
-            p = p*10;
-            m = m*10;
+            s = '-0.';
+            n = -n;
         }
-        return Math.round(n*m)/m;
+        while (n && i < 4)
+        {
+            n = n*10;
+            s += (n|0);
+            c = c || (n|0);
+            n = n-(n|0);
+            if (c)
+                i++;
+        }
+        return s;
     }
 
     componentDidMount()

@@ -16,6 +16,7 @@ class Calc extends preact.Component
         ec_data: 2,
         ec_parity: 1,
         eager: false,
+        same_host: true,
         result: 0,
     }
 
@@ -34,6 +35,7 @@ class Calc extends preact.Component
             ec_parity: st.ec_parity,
             replicas: st.replicas,
             pgs: 50,
+            osd_rm: !st.same_host,
             degraded_replacement: st.eager,
         });
         this.setState(st);
@@ -64,6 +66,11 @@ class Calc extends preact.Component
     setEager = (event) =>
     {
         this.calc({ eager: event.target.checked });
+    }
+
+    setSameHost = (event) =>
+    {
+        this.calc({ same_host: event.target.checked });
     }
 
     format4 = (n) =>
@@ -158,6 +165,12 @@ class Calc extends preact.Component
                     <td><input type="text" value={state.afr_host} onchange={this.setter('afr_host')} /> %</td>
                 </tr>
             </table>
+            <p>
+                <label><input type="checkbox" checked={state.same_host} onchange={this.setSameHost} />
+                    При отказе диска данные распределяются только по другим дискам того же сервера,
+                    как в Ceph
+                </label>
+            </p>
             <p>
                 <label><input type="checkbox" checked={state.eager} onchange={this.setEager} />
                     Я нетерпеливый и заменяю отказавший диск сразу, не давая данным уехать на остальные диски

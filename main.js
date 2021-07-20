@@ -11,6 +11,7 @@ class Calc extends preact.Component
         afr_host: 5,
         capacity: 8,
         speed: 20,
+        pg_per_osd: 50,
         ec: false,
         replicas: 2,
         ec_data: 2,
@@ -34,7 +35,7 @@ class Calc extends preact.Component
             ec_data: st.ec_data,
             ec_parity: st.ec_parity,
             replicas: st.replicas,
-            pgs: 50,
+            pgs: st.pg_per_osd,
             osd_rm: !st.same_host,
             degraded_replacement: st.eager,
         });
@@ -155,6 +156,10 @@ class Calc extends preact.Component
                 <tr>
                     <th>Оценочная скорость<br />восстановления на 1 OSD</th>
                     <td><input type="text" value={state.speed} onchange={this.setter('speed')} /> МБ/с</td>
+                </tr>
+                <tr>
+                    <th><abbr title="Среднее число уникальных групп чётности (пар/троек и т.п.), включающих каждый отдельный диск. В Ceph нормой считается 100 PG на OSD, из которых, допустим, половина дублируется">PG на OSD</abbr></th>
+                    <td><input type="text" value={state.pg_per_osd} onchange={this.setter('pg_per_osd')} /></td>
                 </tr>
                 <tr>
                     <th><abbr title="Annualized Failure Rate, вероятность отказа в течение года в %">AFR</abbr> диска</th>

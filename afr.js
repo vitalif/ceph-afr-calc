@@ -58,11 +58,16 @@ function failure_rate_fullmesh(n, a, f)
 function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 600 })
 {
     const pg_size = (ec ? ec_data+ec_parity : replicas);
-    pgs = Math.min(pgs, (n_hosts-1)*n_drives/(pg_size-1));
-    const host_pgs = Math.min(pgs*n_drives, (n_hosts-1)*n_drives/(pg_size-1));
-    const resilver_disk = n_drives == 1 || osd_rm ? pgs : (n_drives-1);
-    const disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_disk)/speed)/86400/365;
-    const host_heal_time = (down_out_interval + n_drives*capacity/pgs/speed)/86400/365;
+    // <peers> is a number of non-intersecting PGs that a single OSD/drive has on average
+    const peers = avg_distinct((n_hosts-1)*n_drives, pgs*(pg_size-1))/(pg_size-1);
+    // <host_peers> is a number of non-intersecting PGs that a single host has on average
+    const host_peers = avg_distinct((n_hosts-1)*n_drives, pgs*(pg_size-1)*n_drives)/(pg_size-1);
+    // <resilver_peers> other drives participate in resilvering of a single failed drive
+    const resilver_peers = n_drives == 1 || osd_rm ? avg_distinct((n_hosts-1)*n_drives, pgs) : avg_distinct(n_drives-1, pgs);
+    // <host_resilver_peers> other drives participate in resilvering of a failed host
+    const host_resilver_peers = avg_distinct((n_hosts-1)*n_drives, n_drives*pgs);
+    const disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_peers)/speed)/86400/365;
+    const host_heal_time = (down_out_interval + n_drives*capacity/host_resilver_peers/speed)/86400/365;
     const disk_heal_fail = ((afr_drive+afr_host/n_drives)*disk_heal_time);
     const host_heal_fail = ((afr_drive+afr_host/n_drives)*host_heal_time);
     const disk_pg_fail = ec
@@ -71,8 +76,8 @@ function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, 
     const host_pg_fail = ec
         ? failure_rate_fullmesh(ec_data+ec_parity-1, host_heal_fail, ec_parity)
         : host_heal_fail**(replicas-1);
-    return 1 - ((1 - afr_drive * (1-(1-disk_pg_fail)**pgs)) ** (n_hosts*n_drives))
-        * ((1 - afr_host * (1-(1-host_pg_fail)**host_pgs)) ** n_hosts);
+    return 1 - ((1 - afr_drive * (1-(1-disk_pg_fail)**peers)) ** (n_hosts*n_drives))
+        * ((1 - afr_host * (1-(1-host_pg_fail)**host_peers)) ** n_hosts);
 }
 
 /******** UTILITY ********/
@@ -86,4 +91,10 @@ function c_n_k(n, k)
         r *= (n-i) / (i+1);
     }
     return r;
+}
+
+// Average birthdays for K people with N total days
+function avg_distinct(n, k)
+{
+    return n * (1 - (1 - 1/n)**k);
 }

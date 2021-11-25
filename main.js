@@ -166,7 +166,7 @@ class Calc extends preact.Component
                     <td><input type="text" value={state.afr_drive} onchange={this.setter('afr_drive')} /> %</td>
                 </tr>
                 <tr>
-                    <th>AFR сервера</th>
+                    <th><abbr title="Вероятность отказа сервера сразу со всеми дисками, без возвращения их в строй">AFR сервера</abbr></th>
                     <td><input type="text" value={state.afr_host} onchange={this.setter('afr_host')} /> %</td>
                 </tr>
             </table>

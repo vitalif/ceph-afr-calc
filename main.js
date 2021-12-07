@@ -11,7 +11,7 @@ class Calc extends preact.Component
         afr_host: 5,
         capacity: 8,
         speed: 20,
-        pg_per_osd: 50,
+        pg_per_osd: 100,
         ec: false,
         replicas: 2,
         ec_data: 2,
@@ -19,6 +19,7 @@ class Calc extends preact.Component
         eager: false,
         same_host: true,
         result: 0,
+        use_speed: true,
     }
 
     calc(st)
@@ -30,7 +31,8 @@ class Calc extends preact.Component
             afr_drive: st.afr_drive/100,
             afr_host: st.afr_host/100,
             capacity: st.capacity*1000,
-            speed: st.speed/1000,
+            speed: st.use_speed ? st.speed/1000 : null,
+            disk_heal_hours: st.use_speed ? null : st.disk_heal_hours,
             ec: st.ec,
             ec_data: st.ec_data,
             ec_parity: st.ec_parity,
@@ -38,6 +40,7 @@ class Calc extends preact.Component
             pgs: st.pg_per_osd,
             osd_rm: !st.same_host,
             degraded_replacement: st.eager,
+            down_out_interval: 600,
         });
         this.setState(st);
     }
@@ -67,6 +70,16 @@ class Calc extends preact.Component
     setEager = (event) =>
     {
         this.calc({ eager: event.target.checked });
+    }
+
+    useSpeed = () =>
+    {
+        this.calc({ use_speed: true, speed: this.state.speed || 20 });
+    }
+
+    useTime = () =>
+    {
+        this.calc({ use_speed: false, disk_heal_hours: 12 });
     }
 
     setSameHost = (event) =>
@@ -110,7 +123,7 @@ class Calc extends preact.Component
                 Калькулятор вероятности отказа кластера Ceph/Vitastor
             </h2>
             <p>
-                Вероятность полного отказа кластера зависит от числа серверов и дисков
+                Вероятность потери данных в кластере зависит от числа серверов и дисков
                 (чем их больше, тем вероятность больше), от схемы избыточности, скорости ребаланса (восстановления),
                 и, конечно, непосредственно вероятности выхода из строя самих дисков и серверов.
             </p>
@@ -154,11 +167,23 @@ class Calc extends preact.Component
                     <td><input type="text" value={state.ec_parity} onchange={this.setter('ec_parity')} /></td>
                 </tr> : null}
                 <tr>
-                    <th>Оценочная скорость<br />восстановления на 1 OSD</th>
-                    <td><input type="text" value={state.speed} onchange={this.setter('speed')} /> МБ/с</td>
+                    <th>
+                        {state.use_speed ? 'Оценочная' : 'Оценочное'}&nbsp;
+                        <span className="icombo">
+                            {state.use_speed ? 'скорость' : 'время'} <span className="icon-arw-down"></span>
+                            <span className="options">
+                                <span className="option" onClick={this.useSpeed}>скорость</span>
+                                <span className="option" onClick={this.useTime}>время</span>
+                            </span>
+                        </span>
+                        <br />восстановления на 1 OSD
+                    </th>
+                    {state.use_speed
+                        ? <td><input type="text" value={state.speed} onchange={this.setter('speed')} /> МБ/с</td>
+                        : <td><input type="text" value={state.disk_heal_hours} onchange={this.setter('disk_heal_hours')} /> час(ов)</td>}
                 </tr>
                 <tr>
-                    <th><abbr title="Среднее число уникальных групп чётности (пар/троек и т.п.), включающих каждый отдельный диск. В Ceph нормой считается 100 PG на OSD, из которых, допустим, половина дублируется">PG на OSD</abbr></th>
+                    <th><abbr title="Среднее число уникальных групп чётности (пар/троек и т.п.), включающих каждый отдельный диск. В Ceph нормой считается 100 PG на OSD">PG на OSD</abbr></th>
                     <td><input type="text" value={state.pg_per_osd} onchange={this.setter('pg_per_osd')} /></td>
                 </tr>
                 <tr>

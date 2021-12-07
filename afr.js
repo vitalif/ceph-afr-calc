@@ -55,7 +55,8 @@ function failure_rate_fullmesh(n, a, f)
 // is that, with k=2, total failure rate doesn't depend on number of peers per OSD,
 // because it gets increased linearly by increased number of peers to fail
 // and decreased linearly by reduced rebalance time.
-function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 600 })
+function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, disk_heal_hours, host_heal_hours,
+    ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 })
 {
     const pg_size = (ec ? ec_data+ec_parity : replicas);
     // <peers> is a number of non-intersecting PGs that a single OSD/drive has on average
@@ -66,8 +67,18 @@ function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, 
     const resilver_peers = n_drives == 1 || osd_rm ? avg_distinct((n_hosts-1)*n_drives, pgs) : avg_distinct(n_drives-1, pgs);
     // <host_resilver_peers> other drives participate in resilvering of a failed host
     const host_resilver_peers = avg_distinct((n_hosts-1)*n_drives, n_drives*pgs);
-    const disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_peers)/speed)/86400/365;
-    const host_heal_time = (down_out_interval + n_drives*capacity/host_resilver_peers/speed)/86400/365;
+    let disk_heal_time, host_heal_time;
+    if (speed)
+        disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_peers)/speed)/86400/365;
+    else
+    {
+        disk_heal_time = disk_heal_hours/24/365;
+        speed = capacity / (degraded_replacement ? 1 : resilver_peers) / (disk_heal_hours*3600 - down_out_interval);
+    }
+    if (host_heal_hours)
+        host_heal_time = host_heal_hours/24/365;
+    else
+        host_heal_time = (down_out_interval + n_drives*capacity/host_resilver_peers/speed)/86400/365;
     const disk_heal_fail = ((afr_drive+afr_host/n_drives)*disk_heal_time);
     const host_heal_fail = ((afr_drive+afr_host/n_drives)*host_heal_time);
     const disk_pg_fail = ec

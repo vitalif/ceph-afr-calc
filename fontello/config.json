@@ -1,0 +1,24 @@
+{
+  "name": "fontello",
+  "css_prefix_text": "icon-",
+  "css_use_suffix": false,
+  "hinting": true,
+  "units_per_em": 1000,
+  "ascent": 850,
+  "glyphs": [
+    {
+      "uid": "0430f56230dd33f67f26be82b07a84fc",
+      "css": "arw-down",
+      "code": 59412,
+      "src": "custom_icons",
+      "selected": true,
+      "svg": {
+        "path": "M800 956C828.7 956 857.4 945.1 879.2 923.2L1567.2 235.2C1610.9 191.5 1610.9 120.5 1567.2 76.8 1523.4 33 1452.5 33 1408.7 76.8L800 685.5 191.3 76.8C147.5 33.1 76.6 33.1 32.8 76.8-10.9 120.6-10.9 191.5 32.8 235.3L720.8 923.2C742.7 945.1 771.3 956 800 956Z",
+        "width": 1600
+      },
+      "search": [
+        "arw-down"
+      ]
+    }
+  ]
+}

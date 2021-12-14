@@ -8,6 +8,7 @@ module.exports = {
     cluster_afr_fullmesh,
     failure_rate_fullmesh,
     cluster_afr,
+    cluster_afr_bruteforce,
     c_n_k,
 };
 
@@ -91,6 +92,116 @@ function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, 
         * ((1 - afr_host * (1-(1-host_pg_fail)**host_peers)) ** n_hosts);
 }
 
+// Accurate brute-force based calculation, but only for replicated setups
+function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, disk_heal_hours, replicas, pgs = 1 })
+{
+    // N-wise replication
+    // - Generate random pgs
+    // - For each of them
+    //   - Drive #1 dies within a year
+    //     - Drive #2 dies within +- recovery time around #1 death time
+    //       - afr*2*recovery_time/year probability
+    //       - Drive #3 dies within +- recovery time around #1 and #2
+    //         - afr*1.5*recovery_time/year probability
+    //         - Drive #4 dies within +- recovery time around #1 and #2 and #3
+    //           - etc...
+    //           - integral of max(t-|x-y|, 0), max(min(t-|x-y|, t-|x-z|, t-|y-z|), 0), and so on
+    //           - AFRCoeff(DriveNum >= 3) = 2*(0.5 + PyramidVolume/NCubeVolume)
+    //           - PyramidVolume(N) = 1/N * (BaseSquare=2^(N-1)) * (Height=1)
+    //           - AFRCoeff(DriveNum >= 3) = 1 + 1/(DriveNum-1)
+    //           - so AFRCoeff for 2 3 4 5 6 ... = 2 1.5 1.33 1.25 1.2 ...
+    //       - Drive #3 dies but not within recovery time
+    //       - Drive #3 does not die
+    //     - Drive #2 dies but not within recovery time
+    //     - Drive #2 does not die
+    //   - Drive #1 does not die within a year
+    // - After each step we know we accounted for ALL drive #1 death probability
+    //   AND for (1-AFR) portion of drive #2 death probability (all cases where #2 dies with #1 are already accounted)
+    //   AND for (1-AFR)^2 portion of drive #3 death probability (#3 dying with #1 and #3 already accounted)
+    //   AND so on
+    let pg_set = [];
+    let per_osd = {};
+    /*
+    // Method 1: each drive has at least <pgs>
+    for (let i = 1; i <= n_hosts*n_drives; i++)
+    {
+        while (!per_osd[i] || per_osd[i] < pgs)
+        {
+            const host1 = Math.floor((i-1) / n_drives);
+            let host2 = Math.floor(Math.random()*(n_hosts-1));
+            if (host2 >= host1)
+                host2++;
+            const osd2 = 1 + host2*n_drives + Math.floor(Math.random()*n_drives);
+            pg_set.push([ i, osd2 ]);
+            per_osd[i] = (per_osd[i] || 0) + 1;
+            per_osd[osd2] = (per_osd[osd2] || 0) + 1;
+        }
+    }
+    */
+    // Method 2: N_OSD*PG_PER_OSD/REPLICAS
+    for (let i = 0; i <= n_hosts*n_drives*pgs/replicas; i++)
+    {
+        const pg_hosts = [];
+        while (pg_hosts.length < replicas)
+        {
+            let host = Math.floor(Math.random()*(n_hosts-pg_hosts.length));
+            for (let i = 0; i < pg_hosts.length; i++)
+            {
+                if (host < pg_hosts[i])
+                    break;
+                host++;
+            }
+            pg_hosts.push(host);
+            pg_hosts.sort();
+        }
+        const pg_osds = pg_hosts.map(host => 1 + host*n_drives + Math.floor(Math.random()*n_drives));
+        pg_set.push(pg_osds);
+        pg_osds.forEach(osd => per_osd[osd] = (per_osd[osd] || 0) + 1);
+    }
+    let result = 1;
+    let maydie = {};
+    for (let i = 1; i <= n_hosts*n_drives; i++)
+    {
+        maydie[i] = afr_drive;
+    }
+    for (let pg of pg_set)
+    {
+        let i;
+        for (i = 0; i < pg.length && maydie[pg[i]] > 0; i++) {}
+        if (i < pg.length)
+            continue;
+        let pg_death = maydie[pg[0]] * disk_heal_hours/365/24 * 2 * maydie[pg[1]];
+        for (i = 2; i < pg.length; i++)
+        {
+            pg_death *= disk_heal_hours/365/24 * (1 + 1/i) * maydie[pg[i]];
+        }
+        result *= (1 - pg_death);
+        let cur = maydie[pg[0]];
+        for (i = 1; i < pg.length; i++)
+        {
+            // portion of drive #i death probability equal to multiplication of
+            // all prev drives death probabilities is already accounted for
+            const next = cur*maydie[pg[i]];
+            maydie[pg[i]] *= (1 - cur);
+            cur = next;
+        }
+        maydie[pg[0]] = 0; // all drive #1 death probability is already accounted for
+    }
+    /*
+    // replicas = 2
+    for (let pg of pg_set)
+    {
+        if (maydie[pg[0]] > 0 && maydie[pg[1]] > 0)
+        {
+            result *= (1 - disk_heal_hours/365/24 * 2 * maydie[pg[0]] * maydie[pg[1]]);
+            maydie[pg[1]] *= (1-maydie[pg[0]]); // drive #1 is not dead
+            maydie[pg[0]] = 0; // drive #1 death probability is already accounted for
+        }
+    }
+    */
+    return 1-result;
+}
+
 /******** UTILITY ********/
 
 // Combination count
@@ -109,3 +220,14 @@ function avg_distinct(n, k)
 {
     return n * (1 - (1 - 1/n)**k);
 }
+
+/*
+
+Examples:
+
+console.log(100*cluster_afr({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, replicas: 2, pgs: 10 }), '%');
+console.log(100*cluster_afr_bruteforce({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, replicas: 2, pgs: 10 }), '%');
+console.log(100*cluster_afr({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 2, pgs: 10 }), '%');
+console.log(100*cluster_afr_bruteforce({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 2, pgs: 10 }), '%');
+
+*/

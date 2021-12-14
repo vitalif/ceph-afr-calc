@@ -119,6 +119,23 @@ function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, disk_heal_hours,
     //   AND for (1-AFR) portion of drive #2 death probability (all cases where #2 dies with #1 are already accounted)
     //   AND for (1-AFR)^2 portion of drive #3 death probability (#3 dying with #1 and #3 already accounted)
     //   AND so on
+    //
+    // EC 2+1:
+    // - Drive #1 dies within a year = A1
+    //   - Drive #2 dies within +- recovery time around #1 death time = A1*2*L*A2
+    //   - Drive #2 does not die within recovery time of #1
+    //     - Drive #3 dies within +- recovery time around #1 death time = A1*(1-2*L*A2)*2*L*A2
+    //     - Drive #3 does not die within recovery time of #1
+    // - Drive #1 does not die within a year = 1-A1
+    //   - Drive #2 dies within a year = (1-A1)*A2
+    //     - Drive #3 dies within +- recovery time around #2 death time = (1-A1)*A2*2*L*A3
+    //     - Drive #3 does not die within recovery time of #2
+    //   - Drive #2 does not die within a year
+    // - pg_death = A1*2*L*A2 + A1*(1-2*L*A2)*2*L*A2 + (1-A1)*A2*2*L*A3
+    // - A3 becomes A3*(1 - A1*2*L*A2 - (1-A1)*(1-A2))
+    // - A1 and A2 becomes 0
+    //
+    // So it just needs another part of brute-force :-)
     let pg_set = [];
     let per_osd = {};
     /*

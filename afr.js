@@ -56,6 +56,8 @@ function failure_rate_fullmesh(n, a, f)
 // is that, with k=2, total failure rate doesn't depend on number of peers per OSD,
 // because it gets increased linearly by increased number of peers to fail
 // and decreased linearly by reduced rebalance time.
+//
+// TODO Possible idea for future: account for average server downtime during year.
 function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, disk_heal_hours, host_heal_hours,
     ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 })
 {
@@ -92,9 +94,20 @@ function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, 
         * ((1 - afr_host * (1-(1-host_pg_fail)**host_peers)) ** n_hosts);
 }
 
-// Accurate brute-force based calculation, but only for replicated setups
-function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, disk_heal_hours, replicas, pgs = 1 })
+// Accurate brute-force based calculation, but without "server failure" support
+function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, capacity, speed, disk_heal_hours,
+    ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 })
 {
+    const pg_size = (ec ? ec_data+ec_parity : replicas);
+    let disk_heal_time;
+    if (speed)
+    {
+        // <resilver_peers> other drives participate in resilvering of a single failed drive
+        const resilver_peers = n_drives == 1 || osd_rm ? avg_distinct((n_hosts-1)*n_drives, pgs) : avg_distinct(n_drives-1, pgs);
+        disk_heal_time = (down_out_interval + capacity/(degraded_replacement ? 1 : resilver_peers)/speed)/86400/365;
+    }
+    else
+        disk_heal_time = disk_heal_hours/24/365;
     // N-wise replication
     // - Generate random pgs
     // - For each of them
@@ -135,6 +148,37 @@ function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, disk_heal_hours,
     // - A3 becomes A3*(1 - A1*2*L*A2 - (1-A1)*(1-A2))
     // - A1 and A2 becomes 0
     //
+    // EC N+K:
+    // - Drive #1 dies within a year = A1
+    //   - For each next drive:
+    //     - Drive #i dies within recovery time of #1 = A1*AFRCoeff(seq num of #i)*L*Ai
+    //       - Repeat for (K+1-seq) other drives, multiply all probabilities by A1*AFRCoeff(seq num of #i)*L*Ai
+    //     - Drive #i does not die within recovery time of #1
+    //       - Repeat for other drives, multiply all probabilities by A1*(1 - AFRCoeff(seq num of #i)*L*Ai)
+    // - Drive #1 does not die within a year = 1-A1
+    //   - Set drive #1 remaining death probability to 0
+    //   - Repeat everything starting with other drives except last K, multiply all probabilities by (1-A1)
+    // - pg_death = accumulated K+1 drive death probability from previous steps
+    // - Remaining probabilities for drives 1..N in the group become 0
+    // - Remaining probabilities for drives N+1..N+K in the group are reduced by the death probability
+    //   accumulated from previous steps
+    //
+    // In other words:
+    // - Start with CUR=1
+    // - Drive #1 dies within a year. CUR *= A1
+    //   - [1] For each next drive:
+    //     - Drive #i dies within recovery time of #1. CUR *= AFRCoeff(seq num of #i)*L*Ai
+    //       - Repeat for (K+1-seq) other drives, multiply all probabilities by A1*AFRCoeff(seq num of #i)*L*Ai
+    //       - When (K+1) drives die, increase PG death prob: pg_death += CUR
+    //     - Drive #i does not die within recovery time of #1
+    //       - Drive #i death prob *= (1-CUR)
+    //       - CUR *= (1 - AFRCoeff(seq num of #i)*L*Ai)
+    //       - Repeat [1] for other drives
+    // - Drive #1 does not die within a year = 1-A1
+    //   - Set drive #1 remaining death probability to 0
+    //   - Repeat everything starting with other drives except last K, multiply all probabilities by (1-A1)
+    // Also note that N-wise replication is the same as "EC" 1+(N-1) :-)
+    //
     // So it just needs another part of brute-force :-)
     let pg_set = [];
     let per_osd = {};
@@ -155,11 +199,11 @@ function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, disk_heal_hours,
         }
     }
     */
-    // Method 2: N_OSD*PG_PER_OSD/REPLICAS
-    for (let i = 0; i <= n_hosts*n_drives*pgs/replicas; i++)
+    // Method 2: N_OSD*PG_PER_OSD/PG_SIZE
+    for (let i = 0; i <= n_hosts*n_drives*pgs/pg_size; i++)
     {
         const pg_hosts = [];
-        while (pg_hosts.length < replicas)
+        while (pg_hosts.length < pg_size)
         {
             let host = Math.floor(Math.random()*(n_hosts-pg_hosts.length));
             for (let i = 0; i < pg_hosts.length; i++)
@@ -181,28 +225,49 @@ function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, disk_heal_hours,
     {
         maydie[i] = afr_drive;
     }
-    for (let pg of pg_set)
+    if (!ec)
     {
-        let i;
-        for (i = 0; i < pg.length && maydie[pg[i]] > 0; i++) {}
-        if (i < pg.length)
-            continue;
-        let pg_death = maydie[pg[0]] * disk_heal_hours/365/24 * 2 * maydie[pg[1]];
-        for (i = 2; i < pg.length; i++)
+        for (let pg of pg_set)
         {
-            pg_death *= disk_heal_hours/365/24 * (1 + 1/i) * maydie[pg[i]];
+            let i;
+            for (i = 0; i < pg.length && maydie[pg[i]] > 0; i++) {}
+            if (i < pg.length)
+                continue;
+            let pg_death = maydie[pg[0]] * disk_heal_time * 2 * maydie[pg[1]];
+            for (i = 2; i < pg.length; i++)
+            {
+                pg_death *= disk_heal_time * pyramid(i+1) * maydie[pg[i]];
+            }
+            result *= (1 - pg_death);
+            let cur = maydie[pg[0]];
+            for (i = 1; i < pg.length; i++)
+            {
+                // portion of drive #i death probability equal to multiplication of
+                // all prev drives death probabilities is already accounted for
+                const next = cur*maydie[pg[i]];
+                maydie[pg[i]] *= (1 - cur);
+                cur = next;
+            }
+            maydie[pg[0]] = 0; // all drive #1 death probability is already accounted for
         }
-        result *= (1 - pg_death);
-        let cur = maydie[pg[0]];
-        for (i = 1; i < pg.length; i++)
+    }
+    else
+    {
+        for (let pg of pg_set)
         {
-            // portion of drive #i death probability equal to multiplication of
-            // all prev drives death probabilities is already accounted for
-            const next = cur*maydie[pg[i]];
-            maydie[pg[i]] *= (1 - cur);
-            cur = next;
+            let pg_death = 0;
+            let cur = 1;
+            for (let i = 0; i < pg.length-ec_parity; i++)
+            {
+                // What if drive #i is dead. Check combinations of #i+1 and etc...
+                pg_death += ec_parity == 0
+                    ? cur*maydie[pg[i]]
+                    : pg_death_combinations(maydie, pg, ec_parity, disk_heal_time, cur*maydie[pg[i]], i+1, 2);
+                cur *= (1-maydie[pg[i]]);
+                maydie[pg[i]] = 0;
+            }
+            result *= (1 - pg_death);
         }
-        maydie[pg[0]] = 0; // all drive #1 death probability is already accounted for
     }
     /*
     // replicas = 2
@@ -210,13 +275,43 @@ function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, disk_heal_hours,
     {
         if (maydie[pg[0]] > 0 && maydie[pg[1]] > 0)
         {
-            result *= (1 - disk_heal_hours/365/24 * 2 * maydie[pg[0]] * maydie[pg[1]]);
+            result *= (1 - disk_heal_time * 2 * maydie[pg[0]] * maydie[pg[1]]);
             maydie[pg[1]] *= (1-maydie[pg[0]]); // drive #1 is not dead
             maydie[pg[0]] = 0; // drive #1 death probability is already accounted for
         }
     }
     */
     return 1-result;
+}
+
+function pg_death_combinations(maydie, pg, ec_parity, heal_time, cur, i, deadn)
+{
+    if (!cur)
+    {
+        return 0;
+    }
+    let drive_death = cur * pyramid(deadn) * heal_time * maydie[pg[i]];
+    maydie[pg[i]] -= drive_death;
+    let is_dead = 0, not_dead = 0;
+    if (deadn > ec_parity)
+    {
+        // pg is dead
+        is_dead = drive_death;
+    }
+    else if (i < pg.length-1)
+    {
+        is_dead = pg_death_combinations(maydie, pg, ec_parity, heal_time, drive_death, i+1, deadn+1);
+    }
+    if (i < pg.length-1)
+    {
+        not_dead = pg_death_combinations(maydie, pg, ec_parity, heal_time, cur-drive_death, i+1, deadn);
+    }
+    return is_dead + not_dead;
+}
+
+function pyramid(i)
+{
+    return (1 + 1/(i-1));
 }
 
 /******** UTILITY ********/
@@ -242,9 +337,24 @@ function avg_distinct(n, k)
 
 Examples:
 
-console.log(100*cluster_afr({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, replicas: 2, pgs: 10 }), '%');
-console.log(100*cluster_afr_bruteforce({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, replicas: 2, pgs: 10 }), '%');
-console.log(100*cluster_afr({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 2, pgs: 10 }), '%');
-console.log(100*cluster_afr_bruteforce({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 2, pgs: 10 }), '%');
+console.log('SSD 4*4 * 5% R2 <=', 100*cluster_afr({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4000, speed: 0.1, replicas: 2, pgs: 100 }), '%');
+console.log('SSD 4*4 * 5% R2  =', 100*cluster_afr_bruteforce({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4000, speed: 0.1, replicas: 2, pgs: 100 }), '%');
+console.log('SSD 4*4 * 5% 1+1 =', 100*cluster_afr_bruteforce({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4000, speed: 0.1, ec: true, ec_data: 1, ec_parity: 1, pgs: 100 }), '%');
+console.log('---');
+console.log('4*4 * 5% R2 <=', 100*cluster_afr({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, replicas: 2, pgs: 10 }), '%');
+console.log('4*4 * 5% R2  =', 100*cluster_afr_bruteforce({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, replicas: 2, pgs: 10 }), '%');
+console.log('4*4 * 5% 1+1 =', 100*cluster_afr_bruteforce({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, ec: true, ec_data: 1, ec_parity: 1, pgs: 10 }), '%');
+console.log('---');
+console.log('4*4 * 5% EC 2+1 <=', 100*cluster_afr({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, ec: true, ec_data: 2, ec_parity: 1, pgs: 10 }), '%');
+console.log('4*4 * 5% EC 2+1  =', 100*cluster_afr_bruteforce({ n_hosts: 4, n_drives: 4, afr_drive: 0.05, afr_host: 0, capacity: 4, disk_heal_hours: 24, ec: true, ec_data: 2, ec_parity: 1, pgs: 10 }), '%');
+console.log('---');
+console.log('2500*80 * 0.6% R2 <=', 100*cluster_afr({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 2, pgs: 10 }), '%');
+console.log('2500*80 * 0.6% R2  =', 100*cluster_afr_bruteforce({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 2, pgs: 10 }), '%');
+console.log('---');
+console.log('2500*80 * 0.6% R3 <=', 100*cluster_afr({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 3, pgs: 10 }), '%');
+console.log('2500*80 * 0.6% R3  =', 100*cluster_afr_bruteforce({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, replicas: 3, pgs: 10 }), '%');
+console.log('---');
+console.log('2500*80 * 0.6% EC 4+2 <=', 100*cluster_afr({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, ec: true, ec_data: 4, ec_parity: 2, pgs: 10 }), '%');
+console.log('2500*80 * 0.6% EC 4+2  =', 100*cluster_afr_bruteforce({ n_hosts: 2500, n_drives: 80, afr_drive: 0.006, afr_host: 0, capacity: 10, disk_heal_hours: 18, ec: true, ec_data: 4, ec_parity: 2, pgs: 10 }), '%');
 
 */

@@ -1,6 +1,6 @@
 import * as preact from 'preact';
 /** @jsx preact.h */
-import { cluster_afr } from './afr.js';
+import { cluster_afr, cluster_afr_bruteforce } from './afr.js';
 
 class Calc extends preact.Component
 {
@@ -8,10 +8,10 @@ class Calc extends preact.Component
         hosts: 10,
         drives: 10,
         afr_drive: 3,
-        afr_host: 5,
+        afr_host: 0,
         capacity: 8,
         speed: 20,
-        pg_per_osd: 100,
+        pg_per_osd: 10,
         ec: false,
         replicas: 2,
         ec_data: 2,
@@ -20,12 +20,27 @@ class Calc extends preact.Component
         same_host: true,
         result: 0,
         use_speed: true,
+        sim: true,
     }
 
-    calc(st)
+    _timer = null
+
+    calc(st, force)
     {
-        st = { ...this.state, ...st };
-        st.result = 100*cluster_afr({
+        const empty_st = !st;
+        st = { ...this.state, ...(st||{}) };
+        if (st.sim && !force)
+        {
+            if (this._timer)
+            {
+                clearTimeout(this._timer);
+            }
+            this.setState(st);
+            this._timer = setTimeout(() => this.calc(null, true), 200);
+            return;
+        }
+        const fn = st.sim ? cluster_afr_bruteforce : cluster_afr;
+        st.result = 100*fn({
             n_hosts: st.hosts,
             n_drives: st.drives,
             afr_drive: st.afr_drive/100,
@@ -42,7 +57,7 @@ class Calc extends preact.Component
             degraded_replacement: st.eager,
             down_out_interval: 600,
         });
-        this.setState(st);
+        this.setState(empty_st ? { result: st.result } : st);
     }
 
     setter(field)
@@ -55,6 +70,20 @@ class Calc extends preact.Component
             };
         }
         return this.setter[field];
+    }
+
+    setSim = () =>
+    {
+        if (!this.state.sim)
+        {
+            // Слишком много PG замедляет расчёт
+            this.calc({ sim: true, pgs: this.state.pgs > 10 ? 10 : this.state.pgs });
+        }
+    }
+
+    setThe = () =>
+    {
+        this.calc({ sim: false });
     }
 
     setRepl = () =>
@@ -128,8 +157,18 @@ class Calc extends preact.Component
                 и, конечно, непосредственно вероятности выхода из строя самих дисков и серверов.
             </p>
             <p>
-                Рассчитывается оценка сверху. Расчёт ведётся в простом предположении, что отказы распределены равномерно во времени.
+                Расчёт ведётся в простом предположении, что отказы распределены равномерно во времени.
             </p>
+            <div style={{textAlign: 'center'}}>
+                <div style={{display: 'inline-block'}}>
+                    <label class={"switch l"+(state.sim ? "" : " sel")}>
+                        <input type="radio" name="sim" checked={!state.sim} onclick={this.setThe} /> Теоретический расчёт (оценка сверху)
+                    </label>
+                    <label class={"switch r"+(state.sim ? " sel" : "")}>
+                        <input type="radio" name="sim" checked={state.sim} onclick={this.setSim} /> Переборная модель (точно, но медленно)
+                    </label>
+                </div>
+            </div>
             <table>
                 <tr>
                     <th>Число серверов</th>
@@ -192,7 +231,8 @@ class Calc extends preact.Component
                 </tr>
                 <tr>
                     <th><abbr title="Вероятность отказа сервера сразу со всеми дисками, без возвращения их в строй">AFR сервера</abbr></th>
-                    <td><input type="text" value={state.afr_host} onchange={this.setter('afr_host')} /> %</td>
+                    <td><input disabled={state.sim} title={state.sim ? 'Не поддерживается в режиме симуляции' : ''}
+                        type="text" value={state.afr_host} onchange={this.setter('afr_host')} /> %</td>
                 </tr>
             </table>
             <p>

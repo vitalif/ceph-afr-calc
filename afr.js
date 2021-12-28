@@ -291,7 +291,8 @@ function pg_death_combinations(maydie, pg, ec_parity, heal_time, cur, i, deadn)
         return 0;
     }
     let drive_death = cur * pyramid(deadn) * heal_time * maydie[pg[i]];
-    maydie[pg[i]] -= drive_death;
+    // intersecting deaths are accounted for and non-intersecting deaths are accounted for too
+    maydie[pg[i]] *= (1 - cur);
     let is_dead = 0, not_dead = 0;
     if (deadn > ec_parity)
     {

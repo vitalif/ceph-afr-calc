@@ -95,9 +95,15 @@ function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, 
 }
 
 // Accurate brute-force based calculation, but without "server failure" support
-function cluster_afr_bruteforce({ n_hosts, n_drives, afr_drive, capacity, speed, disk_heal_hours,
-    ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 })
+function cluster_afr_bruteforce(params)
 {
+    for (let k in params)
+    {
+        params[k] = k == 'afr_drive' || k == 'capacity' || k == 'speed' || k == 'disk_heal_hours'
+            ? Number(params[k]) : (params[k]|0);
+    }
+    let { n_hosts, n_drives, afr_drive, capacity, speed, disk_heal_hours,
+        ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 } = params;
     const pg_size = (ec ? ec_data+ec_parity : replicas);
     let disk_heal_time;
     if (speed)

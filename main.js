@@ -19,6 +19,7 @@ class Calc extends preact.Component
         eager: false,
         same_host: true,
         result: 0,
+        error: null,
         use_speed: true,
         sim: true,
     }
@@ -39,25 +40,35 @@ class Calc extends preact.Component
             this._timer = setTimeout(() => this.calc(null, true), 200);
             return;
         }
-        const fn = st.sim ? cluster_afr_bruteforce : cluster_afr;
-        st.result = 100*fn({
-            n_hosts: st.hosts,
-            n_drives: st.drives,
-            afr_drive: st.afr_drive/100,
-            afr_host: st.afr_host/100,
-            capacity: st.capacity*1000,
-            speed: st.use_speed ? st.speed/1000 : null,
-            disk_heal_hours: st.use_speed ? null : st.disk_heal_hours,
-            ec: st.ec,
-            ec_data: st.ec_data,
-            ec_parity: st.ec_parity,
-            replicas: st.replicas,
-            pgs: st.pg_per_osd,
-            osd_rm: !st.same_host,
-            degraded_replacement: st.eager,
-            down_out_interval: 600,
-        });
-        this.setState(empty_st ? { result: st.result } : st);
+        // !( >= ) not the same as < because of NaN
+        if (!(parseInt(st.hosts) >= (st.ec ? parseInt(st.ec_data)+parseInt(st.ec_parity) : parseInt(st.replicas))))
+        {
+            st.error = 'Число серверов (доменов отказа) меньше числа дисков в PG, расчёт невозможен';
+            st.result = 0;
+        }
+        else
+        {
+            const fn = st.sim ? cluster_afr_bruteforce : cluster_afr;
+            st.error = null;
+            st.result = 100*fn({
+                n_hosts: st.hosts,
+                n_drives: st.drives,
+                afr_drive: st.afr_drive/100,
+                afr_host: st.afr_host/100,
+                capacity: st.capacity*1000,
+                speed: st.use_speed ? st.speed/1000 : null,
+                disk_heal_hours: st.use_speed ? null : st.disk_heal_hours,
+                ec: st.ec,
+                ec_data: st.ec_data,
+                ec_parity: st.ec_parity,
+                replicas: st.replicas,
+                pgs: st.pg_per_osd,
+                osd_rm: !st.same_host,
+                degraded_replacement: st.eager,
+                down_out_interval: 600,
+            });
+        }
+        this.setState(empty_st ? { error: st.error, result: st.result } : st);
     }
 
     setter(field)
@@ -137,7 +148,7 @@ class Calc extends preact.Component
             if (c)
                 i++;
         }
-        return s;
+        return s[s.length-1] == '.' ? '0' : s;
     }
 
     componentDidMount()
@@ -171,7 +182,7 @@ class Calc extends preact.Component
             </div>
             <table>
                 <tr>
-                    <th>Число серверов</th>
+                    <th>Число <abbr title="Серверов либо других доменов отказа, если у вас домен отказа другой">серверов</abbr></th>
                     <td><input type="text" value={state.hosts} onchange={this.setter('hosts')} /></td>
                 </tr>
                 <tr>
@@ -250,9 +261,13 @@ class Calc extends preact.Component
             <div style="text-align: center; font-size: 150%; margin: 20px 0; font-weight: bold">
                 Вероятность потери данных в течение года:
             </div>
-            <div style="text-align: center; font-size: 200%; margin: 20px 0; font-weight: bold">
-                {this.format4(state.result)} %
-            </div>
+            {state.error
+                ? <div style="text-align: center; color: red; margin: 20px 0">
+                    {state.error}
+                </div>
+                : <div style="text-align: center; font-size: 200%; margin: 20px 0; font-weight: bold">
+                    {this.format4(state.result)} %
+                </div>}
             <div style="text-align: center; color: #aaa; margin: 10px 0">
                 &copy; Виталий Филиппов 2020+ <a style="color: inherit" href="https://yourcmc.ru/git/vitalif/ceph-afr-calc">(исходники)</a>
             </div>

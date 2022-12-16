@@ -58,10 +58,16 @@ function failure_rate_fullmesh(n, a, f)
 // and decreased linearly by reduced rebalance time.
 //
 // TODO Possible idea for future: account for average server downtime during year.
-function cluster_afr({ n_hosts, n_drives, afr_drive, afr_host, capacity, speed, disk_heal_hours, host_heal_hours,
-    ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 })
+function cluster_afr(params)
 {
-    const pg_size = (ec ? ec_data+ec_parity : replicas);
+    for (let k in params)
+    {
+        params[k] = k == 'afr_drive' || k == 'capacity' || k == 'speed' || k == 'disk_heal_hours'
+            ? Number(params[k]) : (params[k]|0);
+    }
+    let { n_hosts, n_drives, afr_drive, afr_host, capacity, speed, disk_heal_hours, host_heal_hours,
+        ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 } = params;
+    const pg_size = (ec ? parseInt(ec_data)+parseInt(ec_parity) : parseInt(replicas));
     // <peers> is a number of non-intersecting PGs that a single OSD/drive has on average
     const peers = avg_distinct((n_hosts-1)*n_drives, pgs*(pg_size-1))/(pg_size-1);
     // <host_peers> is a number of non-intersecting PGs that a single host has on average
@@ -101,10 +107,14 @@ function cluster_afr_bruteforce(params)
     {
         params[k] = k == 'afr_drive' || k == 'capacity' || k == 'speed' || k == 'disk_heal_hours'
             ? Number(params[k]) : (params[k]|0);
+        if (params[k] < 0)
+            return 0;
     }
     let { n_hosts, n_drives, afr_drive, capacity, speed, disk_heal_hours,
         ec, ec_data, ec_parity, replicas, pgs = 1, osd_rm, degraded_replacement, down_out_interval = 0 } = params;
     const pg_size = (ec ? ec_data+ec_parity : replicas);
+    if (pg_size <= 0)
+        return 0;
     let disk_heal_time;
     if (speed)
     {

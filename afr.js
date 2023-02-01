@@ -62,7 +62,7 @@ function cluster_afr(params)
 {
     for (let k in params)
     {
-        params[k] = k == 'afr_drive' || k == 'capacity' || k == 'speed' || k == 'disk_heal_hours'
+        params[k] = k == 'afr_drive' || k == 'afr_host' || k == 'capacity' || k == 'speed' || k == 'disk_heal_hours'
             ? Number(params[k]) : (params[k]|0);
     }
     let { n_hosts, n_drives, afr_drive, afr_host, capacity, speed, disk_heal_hours, host_heal_hours,
